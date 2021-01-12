@@ -1,0 +1,91 @@
+---
+title: "Analysis of Hepatoblast Data"
+output: html_notebook
+---
+
+Load required packages.
+```{r}
+library(Seurat)
+library(slingshot)
+library(RColorBrewer)
+library(dplyr)
+```
+
+Read in data.
+```{r}
+#data downloaded from GEO accession GSE90047
+normalised_data = read.csv("GSE90047_Single-cell_RNA-seq_TPM.txt", sep = "\t",stringsAsFactors = F)
+
+mat = as.matrix(normalised_data[,3:ncol(normalised_data)])
+
+#parse time point info 
+info = as.character(lapply(colnames(mat), substr, 1, 5)) 
+
+#only take cells used in Yang et al. 2017 doi:10.1002/hep.29353
+mat = mat[,info %in% c("E10.5","E11.5","E12.5","E13.5","E14.5","E15.5","E17.5")]
+
+#set gene names
+rownames(mat) = as.character(normalised_data$ID)
+```
+
+Upstream processing using Seurat.
+```{r}
+#create Seurat object
+data = CreateSeuratObject(counts = mat)
+
+#normalise data
+data = NormalizeData(data)
+
+#find variable features
+data = FindVariableFeatures(data)
+
+#scale data
+all.genes = rownames(data)
+data = ScaleData(data, features = all.genes)
+
+#run PCA
+data = RunPCA(data, features = VariableFeatures(object = data))
+DimPlot(data, reduction = "pca")
+```
+
+
+
+```{r}
+#cluster data using 1st 10 dimensions
+data = FindNeighbors(data, dims = 1:10)
+data = FindClusters(data)
+DimPlot(data, reduction = "pca")
+```
+
+Trajectory inference using Slingshot.
+```{r}
+#use first 10 PCs for trajectory inference and use Louvain clusters to supervise this.
+pcs = Embeddings(data, reduction = "pca")[,1:10]
+clusters = data$RNA_snn_res.0.8
+
+#infer lineages
+lin = getLineages(pcs, clusters, start.clus = '4')
+
+#extract smooth curves
+crv = getCurves(lin)
+
+#save plot
+png("trajectory.png", width = 5, height = 5, units = "in", res = 300)
+plot(pcs, col = brewer.pal(9,"Set1")[clusters], asp = 1, pch = 16)
+lines(crv, lwd = 3, col = 'black')
+dev.off()
+```
+
+Save data.
+```{r}
+pt = slingPseudotime(crv)
+
+hep_pseudo_time = pt[,1]
+chol_pseudo_time = pt[,2]
+
+single_cell_matrix = pcs
+
+save(chol_pseudo_time, file = "chol_pseudo_time.rda")
+save(hep_pseudo_time, file = "hep_pseudo_time.rda")
+save(single_cell_matrix, file = "single_cell_matrix.rda")
+```
